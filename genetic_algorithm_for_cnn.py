@@ -1,12 +1,9 @@
-import torch
-import torchvision.transforms as transforms
-from torchsummary import summary
-import robust_neural_net
-import genetic_algorithm_for_cnn as ga
-import numpy as np
-import random
 import matplotlib.pyplot as plt
+import numpy as np
+import torch
 from PIL import Image, ImageFilter
+
+import robust_neural_net
 
 # CNN INITIALIZATION
 loaded_model = robust_neural_net.RobustConvNet()
@@ -29,7 +26,7 @@ class Member:
     def convert_matrix_format(self):
         image_array = np.array(self.seed, dtype=np.uint8) * 255
         image = Image.fromarray(image_array)
-        blurred_image = image.convert("L").filter(ImageFilter.GaussianBlur(2))
+        blurred_image = image.convert("L").filter(ImageFilter.GaussianBlur(0.4))
         return np.array(blurred_image)
 
     def score(self):
@@ -45,41 +42,59 @@ class Member:
         self.seed[mask] = 1 - self.seed[mask]
 
 class Population:
+
     def __init__(self, population_size, mutation_rate, rows, columns):
         self.population_size = population_size
         self.rows = rows
         self.columns = columns
         self.mutation_rate = mutation_rate
         self.members = [Member(np.ones((rows, columns))) for _ in range(population_size)]
+        self.sorted_population = sorted(self.members, key=lambda x: x.score(), reverse=True)
+        total_fitness = sum(member.score() for member in self.members)
+        self.fitness = [member.score()/total_fitness for member in self.members ]
+
 
     def print_best_seed(self):
-        return sorted(self.members, key=lambda x: x.score(), reverse=True)
+        return self.sorted_population
 
-    def choose_parent(self):
-        fitness = [genome.score() for genome in self.members]
-        probabilities = np.array(fitness) / sum(fitness)
-        return np.random.choice(self.members, p=probabilities)
+    def choose_parents(self, num_of_parents):
+        # based on our generated a list of members sorted by score
+        # grabs the start of the sorted list - the best parents.
 
-    def reproduction(self):
-        parents = [self.choose_parent() for _ in range(self.population_size)]
-        children = [Member(np.concatenate((parents[i].seed[:parents[i].rows // 2, :], parents[self.population_size - i - 1].seed[parents[i].rows // 2:, :]))) for i in range(self.population_size // 2)]
-        if self.population_size % 2 == 1:
-            children.append(Member(self.choose_parent().seed))
-        self.members = children
+        parents = self.sorted_population[:num_of_parents]
 
-    def mutate_the_kids(self):
-        for member_inst in self.members:
+        # return new list
+
+        return parents
+
+    def mutate(self, member_list):
+        for member_inst in member_list:
             member_inst.mutate(mutation_rate=self.mutation_rate)
 
-# TRAINING LOOP
-pop = Population(population_size=population_size, mutation_rate=mutation_rate, rows=rows, columns=columns)
-for generation in range(3000):
-    pop.reproduction()
-    pop.mutate_the_kids()
-    if generation % 500 == 0:
-        best_member = pop.print_best_seed()[0]
-        best_image = best_member.seed
-        print(best_member.score())
-        plt.imshow(best_image, cmap='gray')
-        plt.title(f"Best Seed - Generation {generation}")
-        plt.show()
+    def create_offsprings(self, member_1,member_2):
+        new_seed = np.zeros(member_1.seed.shape)
+        new_seed_2 = np.zeros(member_1.seed.shape)
+        for i in range(member_1.seed.shape[0]):  # iterate over rows: # for every row
+            j  = np.random.randint(0, member_1.seed.shape[1]-1) # create a random cutoff point
+            new_seed[i] = np.append(member_1.seed[i][:j], member_2.seed[i][j:]) # create two offsprings like in the paper
+            new_seed_2[i]  = np.append(member_2.seed[i][:j], member_1.seed[i][j:])
+        return [Member(new_seed), Member(new_seed_2)]
+
+    def choose_parents_in_random(self):
+        parents = (np.random.choice(self.members, 2 ,p=  self.fitness ))
+        return parents
+
+
+    def reproduction(self):
+        crossover_num = int(self.population_size * 0.75)
+        crossovers = self.choose_parents(crossover_num )
+        self.mutate(crossovers)
+        reproduction_num = int(self.population_size * 0.25)
+        for i in range(reproduction_num//2):
+            parents = self.choose_parents_in_random()
+            crossovers.extend(self.create_offsprings(*parents))
+        self.members = crossovers
+
+
+
+
